@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"go-scheduler/app"
@@ -46,7 +45,7 @@ func main() {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			worker(ctx)
+			runWorker(ctx)
 		}()
 	}
 
@@ -70,68 +69,41 @@ func signalListener(signalChan chan os.Signal, termChan chan bool) {
 	}
 }
 
-func worker(ctx context.Context) {
+type SimpleClock struct{}
+
+func (c SimpleClock) Now() time.Time {
+	return time.Now()
+}
+
+func (c SimpleClock) Sleep() {
+	log.Debug("message rescheduled, waiting")
+	time.Sleep(5 * time.Second)
+}
+
+func runWorker(ctx context.Context) {
 	consumer, err := app.NewRedis(config.RedisAddr, config.RedisPassword)
 	if err != nil {
-		log.Fatalf("Failed to connect to Redis: %v", err)
+		log.Fatalf("failed to connect to Redis: %v", err)
 	}
 	defer consumer.Close()
 
 	producer, err := app.NewRabbit(config.RabbitUrl)
 	if err != nil {
-		log.Fatalf("Failed to connect to RabbitMQ: %v", err)
+		log.Fatalf("failed to connect to RabbitMQ: %v", err)
 	}
 	defer producer.Close()
 
+	worker := app.NewWorker(consumer, producer, &SimpleClock{})
 	log.Println("worker started")
-
 	for {
 		select {
 		case <-ctx.Done():
 			log.Println("worker stopped")
 			return
 		default:
-			process(consumer, producer)
+			if err := worker.Process(config.DelayedQueue); err != nil {
+				log.Warnf("failed to process task: %v", err)
+			}
 		}
 	}
-}
-
-func process(consumer app.Consumer, producer app.Producer) {
-	task, err := consumer.First(config.DelayedQueue)
-	if err != nil {
-		log.Println(err)
-		return
-	}
-
-	executeAt := time.Unix(task.ExecuteAt, 0)
-	if executeAt.After(time.Now()) {
-		if err = consumer.Reschedule(config.DelayedQueue, task); err != nil {
-			log.Println(err)
-			return
-		}
-		time.Sleep(5 * time.Second)
-		return
-	}
-
-	job, err := transform(task)
-	if err != nil {
-		log.Println(err)
-		return
-	}
-
-	if err = producer.Publish(job); err != nil {
-		if err = consumer.Reschedule(config.DelayedQueue, task); err != nil {
-			log.Println(err)
-			return
-		}
-		log.Println(err)
-		return
-	}
-}
-
-func transform(task *app.DelayedTask) (*app.Job, error) {
-	var job app.Job
-	err := json.Unmarshal([]byte(task.Body), &job)
-
-	return &job, err
 }

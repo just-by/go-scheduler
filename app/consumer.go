@@ -6,16 +6,6 @@ import (
 	"time"
 )
 
-type DelayedTask struct {
-	ExecuteAt int64
-	Body      string
-}
-
-type Consumer interface {
-	First(queue string) (*DelayedTask, error)
-	Reschedule(queue string, task *DelayedTask) error
-}
-
 type Redis struct {
 	*redis.Client
 }
@@ -52,7 +42,7 @@ func (r *Redis) First(queue string) (*DelayedTask, error) {
 	}
 
 	task := DelayedTask{
-		ExecuteAt: int64(val.Z.Score),
+		ExecuteAt: time.Unix(int64(val.Z.Score), 0),
 		Body:      body,
 	}
 
@@ -63,7 +53,7 @@ func (r *Redis) Reschedule(queue string, task *DelayedTask) error {
 	_, err := r.Client.ZAdd(
 		queue,
 		&redis.Z{
-			Score:  float64(task.ExecuteAt),
+			Score:  float64(task.ExecuteAt.Unix()),
 			Member: task.Body,
 		}).Result()
 

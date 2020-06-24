@@ -5,15 +5,6 @@ import (
 	"github.com/streadway/amqp"
 )
 
-type Job struct {
-	Queue   string      `json:"queue"`
-	Payload interface{} `json:"payload"`
-}
-
-type Producer interface {
-	Publish(job *Job) error
-}
-
 type Rabbit struct {
 	*amqp.Connection
 }
